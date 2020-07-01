@@ -22,6 +22,7 @@ namespace Slippi {
   const uint8_t UCF_TOGGLE_SIZE = 8;
   const uint8_t NAMETAG_SIZE = 8;
   const int32_t GAME_FIRST_FRAME = -123;
+  const int32_t PLAYBACK_FIRST_SAVE = -122;
   const uint8_t GAME_SHEIK_INTERNAL_ID = 0x7;
   const uint8_t GAME_SHEIK_EXTERNAL_ID = 0x13;
 
@@ -61,7 +62,7 @@ namespace Slippi {
     uint8_t joystickXRaw;
   } PlayerFrameData;
 
-  typedef struct {
+  typedef struct FrameData {
     int32_t frame;
     uint32_t numSinceStart;
     bool randomSeedExists = false;
@@ -91,7 +92,7 @@ namespace Slippi {
     std::vector<uint8_t> geckoCodes;
   } GameSettings;
 
-  typedef struct {
+  typedef struct Game {
     std::array<uint8_t, 4> version;
     std::unordered_map<int32_t, FrameData*> framesByIndex;
     std::vector<std::unique_ptr<FrameData>> frames;

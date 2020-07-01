@@ -27,6 +27,8 @@ SlippiMatchmaking::SlippiMatchmaking(SlippiUser *user)
 	m_client = nullptr;
 	m_server = nullptr;
 
+	MM_HOST = scm_slippi_semver_str.find("dev") == std::string::npos ? MM_HOST_PROD : MM_HOST_DEV;
+
 	generator = std::default_random_engine(Common::Timer::GetTimeMs());
 }
 
@@ -118,9 +120,8 @@ int SlippiMatchmaking::receiveMessage(json &msg, int timeoutMs)
 			return 0;
 		}
 		case ENET_EVENT_TYPE_DISCONNECT:
-			// TODO: Handle? Probably don't want to mark error because we trigger a disconnect ourselves when we have a
-			// success
-			break;
+			// Return -2 code to indicate we have lost connection to the server
+			return -2;
 		}
 	}
 
@@ -196,17 +197,24 @@ void SlippiMatchmaking::startMatchmaking()
 {
 	// I don't understand why I have to do this... if I don't do this, rand always returns the
 	// same value
-	m_hostPort = 51000 + (generator() % 100);
-	ERROR_LOG(SLIPPI_ONLINE, "[Matchmaking] Port to use: %d...", m_hostPort);
+	m_client = nullptr;
 
-	// We are explicitly setting the client address because we are trying to utilize our connection
-	// to the matchmaking service in order to hole punch. This port will end up being the port
-	// we listen on when we start our server
-	ENetAddress clientAddr;
-	clientAddr.host = ENET_HOST_ANY;
-	clientAddr.port = m_hostPort;
+	int retryCount = 0;
+	while (m_client == nullptr && retryCount < 15)
+	{
+		m_hostPort = 49000 + (generator() % 2000);
+		ERROR_LOG(SLIPPI_ONLINE, "[Matchmaking] Port to use: %d...", m_hostPort);
 
-	m_client = enet_host_create(&clientAddr, 1, 3, 0, 0);
+		// We are explicitly setting the client address because we are trying to utilize our connection
+		// to the matchmaking service in order to hole punch. This port will end up being the port
+		// we listen on when we start our server
+		ENetAddress clientAddr;
+		clientAddr.host = ENET_HOST_ANY;
+		clientAddr.port = m_hostPort;
+
+		m_client = enet_host_create(&clientAddr, 1, 3, 0, 0);
+		retryCount++;
+	}
 
 	if (m_client == nullptr)
 	{
@@ -237,12 +245,12 @@ void SlippiMatchmaking::startMatchmaking()
 	while (!isMmConnected)
 	{
 		ENetEvent netEvent;
-		int net = enet_host_service(m_client, &netEvent, 1000);
+		int net = enet_host_service(m_client, &netEvent, 500);
 		if (net <= 0 || netEvent.type != ENET_EVENT_TYPE_CONNECT)
 		{
 			// Not yet connected, will retry
 			connectAttemptCount++;
-			if (connectAttemptCount >= 30)
+			if (connectAttemptCount >= 20)
 			{
 				ERROR_LOG(SLIPPI_ONLINE, "[Matchmaking] Failed to connect to mm server...");
 				m_state = ProcessState::ERROR_ENCOUNTERED;
@@ -297,6 +305,7 @@ void SlippiMatchmaking::startMatchmaking()
 	if (respType != MmMessageType::CREATE_TICKET_RESP)
 	{
 		ERROR_LOG(SLIPPI_ONLINE, "[Matchmaking] Received incorrect response for create ticket");
+		ERROR_LOG(SLIPPI_ONLINE, "%s", response.dump().c_str());
 		m_state = ProcessState::ERROR_ENCOUNTERED;
 		m_errorMsg = "Invalid response when joining mm queue";
 		return;
@@ -324,9 +333,17 @@ void SlippiMatchmaking::handleMatchmaking()
 	// Get response from server
 	json getResp;
 	int rcvRes = receiveMessage(getResp, 2000);
-	if (rcvRes != 0)
+	if (rcvRes == -1)
 	{
 		INFO_LOG(SLIPPI_ONLINE, "[Matchmaking] Have not yet received assignment");
+		return;
+	}
+	else if (rcvRes != 0)
+	{
+		// Right now the only other code is -2 meaning the server died probably?
+		ERROR_LOG(SLIPPI_ONLINE, "[Matchmaking] Lost connection to the mm server");
+		m_state = ProcessState::ERROR_ENCOUNTERED;
+		m_errorMsg = "Lost connection to the mm server";
 		return;
 	}
 
@@ -340,16 +357,15 @@ void SlippiMatchmaking::handleMatchmaking()
 	}
 
 	std::string err = getResp.value("error", "");
+	std::string latestVersion = getResp.value("latestVersion", "");
 	if (err.length() > 0)
 	{
-		if (StringStartsWith(err, "Your application is outdated"))
+		if (latestVersion != "")
 		{
 			// Update file to get new version number when the mm server tells us our version is outdated
 			m_user->UpdateFile();
 			m_user->AttemptLogin();
-#ifndef _WIN32
-			err = "Your application is outdated. Head to slippi.gg to get the latest version.";
-#endif
+			m_user->OverwriteLatestVersion(latestVersion); // Force latest version for people whose file updates dont work
 		}
 
 		ERROR_LOG(SLIPPI_ONLINE, "[Matchmaking] Received error from server for get ticket");
@@ -370,66 +386,13 @@ void SlippiMatchmaking::handleMatchmaking()
 	ERROR_LOG(SLIPPI_ONLINE, "[Matchmaking] Opponent found. isDecider: %s", m_isHost ? "true" : "false");
 }
 
-void SlippiMatchmaking::sendHolePunchMsg(std::string remoteIp, u16 remotePort, u16 localPort)
-{
-	// We are explicitly setting the client address because we are trying to utilize our connection
-	// to the matchmaking service in order to hole punch. This port will end up being the port
-	// we listen on when we start our server
-	ENetAddress clientAddr;
-	clientAddr.host = ENET_HOST_ANY;
-	clientAddr.port = localPort;
-
-	auto client = enet_host_create(&clientAddr, 1, 3, 0, 0);
-
-	if (client == nullptr)
-	{
-		// Failed to create client
-		m_state = ProcessState::ERROR_ENCOUNTERED;
-		m_errorMsg = "Failed to start hole punch";
-		return;
-	}
-
-	ENetAddress addr;
-	enet_address_set_host(&addr, remoteIp.c_str());
-	addr.port = remotePort;
-
-	auto server = enet_host_connect(client, &addr, 3, 0);
-
-	if (server == nullptr)
-	{
-		// Failed to connect to server
-		m_state = ProcessState::ERROR_ENCOUNTERED;
-		m_errorMsg = "Failed to start hole punch";
-		return;
-	}
-
-	// Send connect message?
-	enet_host_flush(client);
-
-	enet_peer_reset(server);
-	enet_host_destroy(client);
-}
-
 void SlippiMatchmaking::handleConnecting()
 {
 	std::vector<std::string> ipParts;
 	SplitString(m_oppIp, ':', ipParts);
 
-	std::unique_ptr<SlippiNetplayClient> client;
-	if (m_isHost)
-	{
-		sendHolePunchMsg(ipParts[0], std::stoi(ipParts[1]), m_hostPort);
-		if (m_state != ProcessState::OPPONENT_CONNECTING)
-			return;
-
-		client = std::make_unique<SlippiNetplayClient>("", 0, m_hostPort, true);
-	}
-	else
-	{
-		client = std::make_unique<SlippiNetplayClient>(ipParts[0], std::stoi(ipParts[1]), m_hostPort, false);
-	}
-
-	// TODO: Swap host if connection fails
+	// Is host is now used to specify who the decider is
+	auto client = std::make_unique<SlippiNetplayClient>(ipParts[0], std::stoi(ipParts[1]), m_hostPort, m_isHost);
 
 	while (!m_netplayClient)
 	{
@@ -447,17 +410,7 @@ void SlippiMatchmaking::handleConnecting()
 		}
 		else if (status != SlippiNetplayClient::SlippiConnectStatus::NET_CONNECT_STATUS_CONNECTED)
 		{
-			if (!m_isSwapAttempt)
-			{
-				ERROR_LOG(SLIPPI_ONLINE, "[Matchmaking] Connection attempt 1 failed, attempting swap.");
-
-				// Try swapping hosts and connecting again
-				m_isHost = !m_isHost;
-				m_isSwapAttempt = true;
-				return;
-			}
-
-			ERROR_LOG(SLIPPI_ONLINE, "[Matchmaking] Connection attempts both failed, looking for someone else.");
+			ERROR_LOG(SLIPPI_ONLINE, "[Matchmaking] Connection attempt failed, looking for someone else.");
 
 			// Return to the start to get a new ticket to find someone else we can hopefully connect with
 			m_netplayClient = nullptr;

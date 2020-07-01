@@ -70,3 +70,17 @@ semver.lib
 semver.idb
 semver.pdb
 semver.log
+
+AppDir/
+linuxdeploy
+linuxdeploy-update-plugin
+appimageupdatetool
+Tools/linuxdeploy
+Tools/linuxdeploy-update-plugin
+Tools/appimageupdatetool
+Tools/*.AppImage
+Tools/*.zsync
+Tools/*.zs-old
+*.AppImage
+*.zsync
+*.zs-old

@@ -30,6 +30,8 @@
     <VCProjectVersion>15.0</VCProjectVersion>
     <ProjectGuid>{1BC426C4-AF38-4C29-A925-02406BC00490}</ProjectGuid>
     <RootNamespace>semver</RootNamespace>
+    <ProjectGuid>{0EBBDAFA-3A7D-46D0-B0EE-F53D7DD6F571}</ProjectGuid>
+    <RootNamespace>SlippiPlayback</RootNamespace>
     <WindowsTargetPlatformVersion>10.0.17763.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -62,7 +64,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v141</PlatformToolset>
+    <PlatformToolset>v142</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>

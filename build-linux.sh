@@ -1,20 +1,23 @@
 #!/bin/bash -e
-# build-linux.sh - simple script for invoking CMake
-# Note that this will destroy any local configuration in build/Binaries/.
+# build-linux.sh
 
-if [ -e "build/" ]; then 
-	rm -rf build/
-	mkdir build
-else
-	mkdir build
-fi
+case "${1}" in
+	# Enables portable configuration files via portable.txt
+	portable)
+		CMAKE_FLAGS='-DLINUX_LOCAL_DEV=true'
+		;;
+	appimage)
+		CMAKE_FLAGS=''
+		;;
+	*)
+		echo "usage: ${0} <portable|appimage>"
+		exit 1
+		;;
+esac
 
+# Move into the build directory, run CMake, and compile the project
+mkdir -p build
 pushd build
-cmake -DLINUX_LOCAL_DEV=true ../
-#cmake -DLINUX_LOCAL_DEV=true -DFASTLOG=true../
-#cmake -DCMAKE_BUILD_TYPE=Debug -DLINUX_LOCAL_DEV=true ../
-make -j7
+cmake ${CMAKE_FLAGS} ..
+make -j$(nproc)
 popd
-
-touch build/Binaries/portable.txt
-cp -R Overwrite/* build/Binaries/

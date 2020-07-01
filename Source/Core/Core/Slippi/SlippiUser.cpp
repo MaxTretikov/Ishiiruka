@@ -8,21 +8,24 @@
 #include "Common/CommonPaths.h"
 #include "Common/FileUtil.h"
 #include "Common/Logging/Log.h"
+#include "Common/MsgHandler.h"
 #include "Common/StringUtil.h"
 #include "Common/Thread.h"
 
 #include "Core/ConfigManager.h"
+
+#include <codecvt>
+#include <locale>
 
 #include <json.hpp>
 using json = nlohmann::json;
 
 #ifdef _WIN32
 #define MAX_SYSTEM_PROGRAM (4096)
-static int system_hidden(const char *cmd)
+static void system_hidden(const char *cmd)
 {
 	PROCESS_INFORMATION p_info;
 	STARTUPINFO s_info;
-	DWORD ReturnValue;
 
 	memset(&s_info, 0, sizeof(s_info));
 	memset(&p_info, 0, sizeof(p_info));
@@ -32,14 +35,23 @@ static int system_hidden(const char *cmd)
 	MultiByteToWideChar(CP_UTF8, 0, cmd, -1, utf16cmd, MAX_SYSTEM_PROGRAM);
 	if (CreateProcessW(NULL, utf16cmd, NULL, NULL, 0, CREATE_NO_WINDOW, NULL, NULL, &s_info, &p_info))
 	{
+		DWORD ExitCode;
 		WaitForSingleObject(p_info.hProcess, INFINITE);
-		GetExitCodeProcess(p_info.hProcess, &ReturnValue);
+		GetExitCodeProcess(p_info.hProcess, &ExitCode);
 		CloseHandle(p_info.hProcess);
 		CloseHandle(p_info.hThread);
 	}
-	return ReturnValue;
 }
 #endif
+
+static void RunSystemCommand(const std::string &command)
+{
+#ifdef _WIN32
+	_wsystem(UTF8ToUTF16(command).c_str());
+#else
+	system(command.c_str());
+#endif
+}
 
 SlippiUser::~SlippiUser()
 {
@@ -54,6 +66,31 @@ bool SlippiUser::AttemptLogin()
 	std::string userFilePath = getUserFilePath();
 
 	INFO_LOG(SLIPPI_ONLINE, "Looking for file at: %s", userFilePath.c_str());
+
+	{
+		std::string userFilePathTxt =
+		    userFilePath + ".txt"; // Put the filename here in its own scope because we don't really need it elsewhere
+		// If both files exist we just log they exist and take no further action
+		if (File::Exists(userFilePathTxt) && File::Exists(userFilePath))
+		{
+			INFO_LOG(SLIPPI_ONLINE,
+			         "Found both .json.txt and .json file for user data. Using .json and ignoring the .json.txt");
+		}
+		// If only the .txt file exists copy the contents to a json file and delete the text file
+		else if (File::Exists(userFilePathTxt))
+		{
+			// Attempt to copy the txt file to the json file path. If it fails log a warning
+			if (!File::Copy(userFilePathTxt, userFilePath))
+			{
+				WARN_LOG(SLIPPI_ONLINE, "Could not copy file %s to %s", userFilePathTxt.c_str(), userFilePath.c_str());
+			}
+			// Attempt to delete the txt file. If it fails log an info because this isn't as critical
+			if (!File::Delete(userFilePathTxt))
+			{
+				INFO_LOG(SLIPPI_ONLINE, "Failed to delete %s", userFilePathTxt.c_str());
+			}
+		}
+	}
 
 	// Get user file
 	std::string userFileContents;
@@ -92,7 +129,7 @@ void SlippiUser::OpenLogInPage()
 	std::string command = "xdg-open \"" + fullUrl + "\""; // Linux
 #endif
 
-	system(command.c_str());
+	RunSystemCommand(command);
 }
 
 void SlippiUser::UpdateFile()
@@ -101,6 +138,11 @@ void SlippiUser::UpdateFile()
 	std::string path = File::GetExeDirectory() + "/dolphin-slippi-tools.exe";
 	std::string command = path + " user-update";
 	system_hidden(command.c_str());
+#elif defined(__APPLE__)
+#else
+	std::string path = "dolphin-slippi-tools";
+	std::string command = path + " user-update";
+	system(command.c_str());
 #endif
 }
 
@@ -110,9 +152,23 @@ void SlippiUser::UpdateApp()
 	auto isoPath = SConfig::GetInstance().m_strFilename;
 
 	std::string path = File::GetExeDirectory() + "/dolphin-slippi-tools.exe";
-	std::string command = "start \"Updating Dolphin\" \"" + path + "\" app-update -launch -iso \"" + isoPath + "\"";
+	std::string echoMsg = "echo Starting update process. If nothing happen after a few "
+	                      "minutes, you may need to update manually from https://slippi.gg/netplay ...";
+	std::string command = "start /b cmd /c " + echoMsg + " && \"" + path + "\" app-update -launch -iso \"" + isoPath + "\"";
 	WARN_LOG(SLIPPI, "Executing app update command: %s", command);
-	system(command.c_str());
+	RunSystemCommand(command);
+#elif defined(__APPLE__)
+#else
+	const char *appimage_path = getenv("APPIMAGE");
+	if (!appimage_path)
+	{
+		CriticalAlertT("Automatic updates are not available for non-AppImage Linux builds.");
+		return;
+	}
+	std::string path(appimage_path);
+	std::string command = "appimageupdatetool " + path;
+	WARN_LOG(SLIPPI, "Executing app update command: %s", command.c_str());
+	RunSystemCommand(command);
 #endif
 }
 
@@ -136,6 +192,11 @@ void SlippiUser::LogOut()
 	UserInfo emptyUser;
 	isLoggedIn = false;
 	userInfo = emptyUser;
+}
+
+void SlippiUser::OverwriteLatestVersion(std::string version)
+{
+	userInfo.latestVersion = version;
 }
 
 SlippiUser::UserInfo SlippiUser::GetUserInfo()
@@ -162,12 +223,17 @@ void SlippiUser::FileListenThread()
 	}
 }
 
+// On Linux platforms, the user.json file lives in the Sys/ directory in
+// order to deal with the fact that we want the configuration for AppImage
+// builds to be mutable.
 std::string SlippiUser::getUserFilePath()
 {
 #if defined(__APPLE__)
 	std::string dirPath = File::GetBundleDirectory() + "/Contents/Resources";
-#else
+#elif defined(_WIN32)
 	std::string dirPath = File::GetExeDirectory();
+#else
+	std::string dirPath = File::GetSysDirectory();
 #endif
 	std::string userFilePath = dirPath + DIR_SEP + "user.json";
 	return userFilePath;

@@ -122,6 +122,7 @@ struct SConfig : NonCopyable
 	bool bForceNTSCJ = false;
 	bool bHLE_BS2 = true;
 	bool bEnableCheats = false;
+	bool bBootDefaultISO = false;
 	bool bEnableMemcardSdWriting = true;
 	bool bAllowAllNetplayVersions = false;
 	bool bQoSEnabled = true;
@@ -130,6 +131,10 @@ struct SConfig : NonCopyable
     MeleeLagReductionCode iLagReductionCode = MELEE_LAG_REDUCTION_CODE_UNSET;
     bool bHasShownLagReductionWarning = false;
     bool bMeleeForceWidescreen = false;
+
+	bool m_slippiSaveReplays = true;
+	bool m_slippiReplayMonthFolders = false;
+	std::string m_strSlippiReplayDir;
 
 	bool bDPL2Decoder = false;
 	bool bTimeStretching = false;
@@ -182,6 +187,7 @@ struct SConfig : NonCopyable
 	std::string m_analytics_id;
 	bool m_analytics_enabled = false;
 	bool m_analytics_permission_asked = false;
+	bool m_analytics_will_prompt = false;
 
 	// Bluetooth passthrough mode settings
 	bool m_bt_passthrough_enabled = false;
@@ -282,6 +288,7 @@ struct SConfig : NonCopyable
 	// other interface settings
 	bool m_InterfaceToolbar;
 	bool m_InterfaceStatusbar;
+	bool m_InterfaceSeekbar;
 	bool m_InterfaceLogWindow;
 	bool m_InterfaceLogConfigWindow;
 	bool m_InterfaceExtendedFPSInfo;
